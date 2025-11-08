@@ -95,8 +95,52 @@ async def bug_report_chat(request: BugReportChatRequest):
     Handles back-and-forth conversation to gather bug report information,
     then creates Jira ticket and uploads attachments to S3 when complete.
     """
+    session_id = request.session_id
+    
+    # Log incoming request data
+    print(f"\n{'='*80}")
+    print(f"[BUG REPORT CHAT] Received request for session: {session_id}")
+    print(f"[BUG REPORT CHAT] Request data:")
+    print(f"  - Session ID: {session_id}")
+    print(f"  - User ID: {request.user_id}")
+    print(f"  - Messages count: {len(request.messages) if request.messages else 0}")
+    print(f"  - Transcript: {request.transcript[:100] + '...' if request.transcript and len(request.transcript) > 100 else request.transcript}")
+    print(f"  - Console logs: {'Provided' if request.console_logs else 'Not provided'}")
+    print(f"  - Screen recording: {'Provided' if request.screen_recording else 'Not provided'}")
+    
+    if request.messages:
+        print(f"  - Messages array:")
+        for i, msg in enumerate(request.messages):
+            text_preview = msg.text[:100] + '...' if len(msg.text) > 100 else msg.text
+            print(f"    [{i+1}] {msg.sender}: {text_preview}")
+    else:
+        print(f"  - Using transcript format (legacy)")
+    
+    # Log full request payload in JSON format (for debugging)
     try:
-        session_id = request.session_id
+        request_dict = {
+            "session_id": request.session_id,
+            "user_id": request.user_id,
+            "messages": [
+                {"id": msg.id, "sender": msg.sender, "text": msg.text}
+                for msg in (request.messages or [])
+            ] if request.messages else None,
+            "transcript": request.transcript,
+            "console_logs": request.console_logs[:200] + "..." if request.console_logs and len(request.console_logs) > 200 else request.console_logs,
+            "screen_recording": "Provided" if request.screen_recording else None,
+            "jira_api_key": "Provided" if request.jira_api_key else None,
+            "jira_base_url": request.jira_base_url,
+            "jira_project_key": request.jira_project_key,
+            "jira_email": request.jira_email
+        }
+        print(f"[BUG REPORT CHAT] Full request payload (JSON):")
+        print(json.dumps(request_dict, indent=2, ensure_ascii=False))
+    except Exception as e:
+        print(f"[BUG REPORT CHAT] Error logging request payload: {e}")
+    
+    print(f"{'='*80}\n")
+    
+    try:
         
         # Handle both new format (messages array) and old format (transcript)
         if request.messages:
