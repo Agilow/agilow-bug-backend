@@ -240,30 +240,69 @@ async def bug_report_chat(request: BugReportChatRequest):
             })
             conversation_history = existing_history
         
-        # Get OpenAI client
-        openai_client = get_openai_client()
-        if not openai_client:
-            raise HTTPException(status_code=500, detail="OpenAI client not configured")
+        # Check for hard limit: if any message ID > 6, force completion
+        max_message_id = 0
+        if request.messages:
+            max_message_id = max([msg.id for msg in request.messages], default=0)
         
-        # Call Bug Agent with the full conversation and updated collected_info
-        print(f"[BUG REPORT CHAT] Processing message for session: {session_id}")
-        print(f"[BUG REPORT CHAT] Conversation history length: {len(conversation_history)}")
-        print(f"[BUG REPORT CHAT] Current collected_info: {json.dumps(state['collected_info'], indent=2, ensure_ascii=False)}")
-        agent_response = generate_bug_report_conversation(
-            user_input=transcript,
-            conversation_history=conversation_history,
-            collected_info=state['collected_info'],
-            console_logs=request.console_logs,
-            openai_client=openai_client
-        )
+        force_complete = max_message_id > 6
         
-        # Log agent response in JSON format
-        print(f"[BUG REPORT CHAT] Agent response (JSON):")
-        print(json.dumps(agent_response, indent=2, ensure_ascii=False))
-        
-        # Update state with new collected info
-        state['collected_info'] = agent_response.get('bug_report_data', {})
-        state['is_complete'] = agent_response.get('is_complete', False)
+        if force_complete:
+            print(f"[BUG REPORT CHAT] Hard limit reached: Max message ID is {max_message_id} (> 6). Forcing bug report completion.")
+            # Force completion without calling agent
+            state['is_complete'] = True
+            
+            # Ensure we have collected_info - use existing or extract from conversation
+            if not state['collected_info'] or not any(state['collected_info'].values()):
+                # Extract basic info from conversation
+                user_messages = [msg['content'] for msg in conversation_history if msg['role'] == 'user']
+                user_messages_text = " ".join(user_messages)
+                first_user_message = user_messages[0] if user_messages else "Bug report"
+                
+                state['collected_info'] = {
+                    'title': first_user_message[:100] + '...' if len(first_user_message) > 100 else first_user_message,
+                    'description': user_messages_text,
+                    'steps_to_reproduce': 'See full conversation history',
+                    'expected_behavior': 'See conversation history',
+                    'actual_behavior': user_messages_text[:300] if len(user_messages_text) > 300 else user_messages_text,
+                    'severity': 'Medium',
+                    'additional_notes': 'Report created automatically after message limit reached'
+                }
+            
+            # Create confirmation response
+            agent_response = {
+                'user_response': 'Thank you for providing the bug details! I\'ve automatically created the bug report ticket in Jira with all the information you\'ve shared. The ticket has been submitted successfully.',
+                'bug_report_data': state['collected_info'],
+                'is_complete': True,
+                'questions_to_ask': []
+            }
+            print(f"[BUG REPORT CHAT] Skipping agent call due to hard limit. Using collected info:")
+            print(json.dumps(state['collected_info'], indent=2, ensure_ascii=False))
+        else:
+            # Get OpenAI client
+            openai_client = get_openai_client()
+            if not openai_client:
+                raise HTTPException(status_code=500, detail="OpenAI client not configured")
+            
+            # Call Bug Agent with the full conversation and updated collected_info
+            print(f"[BUG REPORT CHAT] Processing message for session: {session_id}")
+            print(f"[BUG REPORT CHAT] Conversation history length: {len(conversation_history)}")
+            print(f"[BUG REPORT CHAT] Current collected_info: {json.dumps(state['collected_info'], indent=2, ensure_ascii=False)}")
+            agent_response = generate_bug_report_conversation(
+                user_input=transcript,
+                conversation_history=conversation_history,
+                collected_info=state['collected_info'],
+                console_logs=request.console_logs,
+                openai_client=openai_client
+            )
+            
+            # Log agent response in JSON format
+            print(f"[BUG REPORT CHAT] Agent response (JSON):")
+            print(json.dumps(agent_response, indent=2, ensure_ascii=False))
+            
+            # Update state with new collected info
+            state['collected_info'] = agent_response.get('bug_report_data', {})
+            state['is_complete'] = agent_response.get('is_complete', False)
         
         # Add agent response to conversation history
         conversation_history.append({
