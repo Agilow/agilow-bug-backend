@@ -245,7 +245,7 @@ async def bug_report_chat(request: BugReportChatRequest):
         if request.messages:
             max_message_id = max([msg.id for msg in request.messages], default=0)
         
-        force_complete = max_message_id > 6
+        force_complete = max_message_id > 4
         
         if force_complete:
             print(f"[BUG REPORT CHAT] Hard limit reached: Max message ID is {max_message_id} (> 6). Forcing bug report completion.")
