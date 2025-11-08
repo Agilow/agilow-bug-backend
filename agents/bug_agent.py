@@ -81,8 +81,8 @@ Please analyze this user input and provide a JSON response. ALWAYS STRICTLY OUTP
 CRITICAL RULES:
 1. Extract information from the user's message and update bug_report_data accordingly
 2. Focus on the 5 critical debugging questions: Reproduction Steps, Severity, Expected vs Actual, Recurrence, Restart Behavior
-3. Ask at most 2 follow-up questions total. If you've already asked {questions_asked_count} questions, you can ask at most {2 - questions_asked_count} more questions
-4. Only mark is_complete: true when user has answered at most 2 follow-up questions OR when you have all 5 critical pieces of information
+3. Strictly ask only 2 follow-up questions and then trigger "is_complete: true"
+4. mark is_complete: true when user has answered at most 2 follow-up questions OR when you have all 5 critical pieces of information
 5. Format questions in questions_to_ask as numbered: "Q1: question text", "Q2: question text"
 6. Use console logs if provided to validate or supplement the user's report
 7. Speak in a friendly, concise, and clear tone
