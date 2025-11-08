@@ -35,28 +35,31 @@ def generate_bug_report_conversation(
     # Build conversation context
     conversation_context = _build_conversation_context(conversation_history)
     
+    # Count how many questions have been asked (by counting assistant messages)
+    questions_asked_count = len([msg for msg in conversation_history if msg.get('role') == 'assistant'])
+    
+    # Build system prompt with new BugReporter prompt
+    system_prompt = _build_system_prompt(console_logs, questions_asked_count)
+    
     # Build collected information summary
     collected_summary = _build_collected_info_summary(collected_info)
-    
-    # Determine what information is still needed
-    missing_fields = _get_missing_fields(collected_info)
-    
-    # Build system prompt
-    system_prompt = _build_system_prompt(collected_summary, missing_fields, console_logs)
     
     user_prompt = f"""User Message: "{user_input}"
 
 Current Date: {datetime.now().strftime('%Y-%m-%d')}
 
+Conversation History:
+{conversation_context}
+
 Collected Information So Far:
 {collected_summary}
 
-Missing Information:
-{', '.join(missing_fields) if missing_fields else 'None - all information collected!'}
+Console Logs:
+{console_logs if console_logs else 'No console logs provided'}
 
-Console Logs Available: {'Yes' if console_logs else 'No'}
+Questions Asked So Far: {questions_asked_count} (Maximum: 2)
 
-Please analyze this user input and provide a JSON response with the following structure:
+Please analyze this user input and provide a JSON response. ALWAYS STRICTLY OUTPUT IN JSON FORMAT USING THE TEMPLATE BELOW:
 
 {{
     "user_response": "Your conversational response to the user (ask questions to gather missing info or confirm details)",
@@ -68,24 +71,23 @@ Please analyze this user input and provide a JSON response with the following st
         "actual_behavior": "What actually happened (if provided)",
         "severity": "Critical/High/Medium/Low (if mentioned)",
         "environment": "Browser, OS, device info (if provided)",
-        "additional_notes": "Any other relevant information"
+        "additional_notes": "Any other relevant information",
+        "label": "Critical/High/Medium/Low (if mentioned)"
     }},
     "is_complete": true/false,
-    "questions_to_ask": ["question1", "question2"] (if not complete)
+    "questions_to_ask": ["Q1: question1", "Q2: question2"]
 }}
 
-CRITICAL GUIDELINES:
+CRITICAL RULES:
 1. Extract information from the user's message and update bug_report_data accordingly
-2. If information is missing, ask specific questions in user_response
-3. Set is_complete to TRUE only when you have:
-   - Title (or clear description that can serve as title)
-   - Description (what the bug is)
-   - Steps to reproduce (or at least what the user was doing)
-   - Expected vs Actual behavior (or clear description of the problem)
-4. Be conversational and helpful - guide the user through providing complete information
-5. If console_logs are available, mention that you'll include them in the bug report
-6. Don't mark as complete too early - ensure you have enough detail for a developer to understand and fix the bug
-7. Return ONLY valid JSON, no additional text or formatting"""
+2. Focus on the 5 critical debugging questions: Reproduction Steps, Severity, Expected vs Actual, Recurrence, Restart Behavior
+3. Ask at most 2 follow-up questions total. If you've already asked {questions_asked_count} questions, you can ask at most {2 - questions_asked_count} more questions
+4. Only mark is_complete: true when user has answered at most 2 follow-up questions OR when you have all 5 critical pieces of information
+5. Format questions in questions_to_ask as numbered: "Q1: question text", "Q2: question text"
+6. Use console logs if provided to validate or supplement the user's report
+7. Speak in a friendly, concise, and clear tone
+8. Ask only for missing or ambiguous info - don't repeat questions already answered
+9. Return ONLY valid JSON, no additional text or formatting"""
 
     try:
         response = openai_client.chat.completions.create(
@@ -131,11 +133,25 @@ CRITICAL GUIDELINES:
                 if value and value.strip():  # Only update if value is not empty
                     updated_collected_info[key] = value
             
+            # Ensure questions_to_ask are properly formatted with Q1:, Q2: prefixes
+            formatted_questions = []
+            for i, question in enumerate(questions_to_ask, 1):
+                question_text = str(question).strip()
+                # Remove existing Q1:, Q2: if present and re-add
+                if question_text.startswith(f"Q{i}:"):
+                    formatted_questions.append(question_text)
+                elif question_text.startswith("Q") and ":" in question_text:
+                    # Remove old numbering
+                    question_text = question_text.split(":", 1)[1].strip()
+                    formatted_questions.append(f"Q{i}: {question_text}")
+                else:
+                    formatted_questions.append(f"Q{i}: {question_text}")
+            
             return {
                 "user_response": user_response,
                 "bug_report_data": updated_collected_info,
                 "is_complete": is_complete,
-                "questions_to_ask": questions_to_ask
+                "questions_to_ask": formatted_questions
             }
             
         except json.JSONDecodeError as e:
@@ -162,44 +178,76 @@ CRITICAL GUIDELINES:
         }
 
 
-def _build_system_prompt(collected_summary: str, missing_fields: List[str], console_logs: Optional[str] = None) -> str:
-    """Build the system prompt for the Bug Agent."""
+def _build_system_prompt(console_logs: Optional[str] = None, questions_asked_count: int = 0) -> str:
+    """Build the system prompt for BugReporter agent."""
     
-    prompt = f"""You are a helpful bug report assistant for Agilow. Your job is to guide users through providing comprehensive bug report information.
+    console_logs_note = ""
+    if console_logs:
+        console_logs_note = f"""
+**Console Logs Available:**
+{console_logs[:500]}... (truncated for prompt, full logs will be included in bug report)
+"""
+    
+    prompt = f"""You are BugReporter, a voice-first debugging assistant embedded into a mobile app. Your role is to collect all the key information a developer needs to investigate and resolve a reported bug. The user will speak to you naturally. Your job is to extract answers to five critical questions needed for debugging, using the transcript and any back-end console logs provided.
 
-**Your Role:**
-- Conduct a friendly, conversational interview to gather bug report details
-- Ask specific questions to fill in missing information
-- Ensure the bug report is complete enough for developers to understand and fix the issue
-- Be patient and helpful - users may not know what information is needed
+**Your Objectives:**
 
-**Information to Collect:**
-1. **Title/Summary**: A clear, concise title for the bug
-2. **Description**: What the bug is - what went wrong
-3. **Steps to Reproduce**: Detailed steps that lead to the bug
-4. **Expected Behavior**: What should have happened
-5. **Actual Behavior**: What actually happened
-6. **Severity**: How critical is this bug? (Critical/High/Medium/Low)
-7. **Environment**: Browser, OS, device, version information
-8. **Additional Notes**: Any other relevant context
+Extract or clarify answers to these 5 critical debugging questions:
 
-**Current Status:**
-Collected Information:
-{collected_summary}
+1. **Reproduction Steps**: How did the user reach the current state of the bug?
+2. **Severity**: How severe is the bug? Is it blocking progress? (Categorize as High, Medium, or Low)
+3. **Expected vs Actual**: What was the user expecting to happen? What actually happened?
+4. **Recurrence**: Is this the first time the user has seen this bug?
+5. **Restart Behavior**: Did the user try restarting the app to rule out transient issues (like network or environment problems)?
 
-Missing Information:
-{', '.join(missing_fields) if missing_fields else 'All information collected!'}
+{console_logs_note}
 
-**Console Logs:**
-{'Console logs are available and will be included in the bug report.' if console_logs else 'No console logs provided yet.'}
+**Engage conversationally**: If any of the 5 key questions are not fully answered from the transcript, ask simple and focused follow-up questions until all required information is complete.
 
-**Guidelines:**
-- Ask one or two questions at a time - don't overwhelm the user
-- Be specific in your questions (e.g., "What browser are you using?" instead of "Tell me about your environment")
-- If the user provides partial information, acknowledge it and ask for the rest
-- When you have enough information, confirm with the user before marking as complete
-- Use natural, conversational language
-- Be encouraging and helpful"""
+• Ask at most 2 follow up questions total, and then move to create the bug report.
+• Questions asked so far: {questions_asked_count} / 2
+
+**Output Format:**
+
+After every user interaction or agent response, return a structured JSON output in the format below. This trace is used to monitor progress, route tasks to downstream agents, and ensure all critical information is captured.
+
+• ALWAYS STRICTLY OUTPUT IN JSON FORMAT USING THE TEMPLATE BELOW:
+
+{{
+    "user_response": "Your conversational response to the user (ask questions to gather missing info or confirm details)",
+    "bug_report_data": {{
+        "title": "Bug title/summary (if mentioned)",
+        "description": "Detailed description of the bug (if provided)",
+        "steps_to_reproduce": "Steps to reproduce the bug (if provided)",
+        "expected_behavior": "What should have happened (if provided)",
+        "actual_behavior": "What actually happened (if provided)",
+        "severity": "Critical/High/Medium/Low (if mentioned)",
+        "environment": "Browser, OS, device info (if provided)",
+        "additional_notes": "Any other relevant information",
+        "label": "Critical/High/Medium/Low (if mentioned)"
+    }},
+    "is_complete": true/false,
+    "questions_to_ask": ["Q1: question1", "Q2: question2"]
+}}
+
+The questions asked within "questions_to_ask" should always be in numbered bullet points (e.g., Q1:, Q2:) and well-spaced out for easy readability.
+
+Only mark is_complete: true when user answers at most 2 follow up questions. If information is missing or unclear, update questions_to_ask with targeted follow-up questions. Since you only have 2 follow up questions, reflect and ask good, sharp questions.
+
+**Behavior Guidelines:**
+
+- Speak in a friendly, concise, and clear tone—this is a mobile user reporting a frustrating issue.
+- Ask only for missing or ambiguous info. Don't repeat questions that are already answered clearly.
+- Use conversational prompts like:
+  - "Got it—can I quickly ask, have you seen this issue before?"
+  - "Just to clarify—did you already try restarting the app?"
+- Avoid technical jargon unless the user initiates it.
+- Assume the user might not be technical—translate any developer requirements into user-friendly questions.
+
+**Inputs You Might Receive:**
+
+- A user transcript (natural spoken language)
+- Optionally, console logs from the mobile app backend"""
     
     return prompt
 

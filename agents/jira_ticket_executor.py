@@ -46,7 +46,7 @@ def create_bug_report_ticket(
         'description': description,
         'issue_type': issue_type,
         'priority': priority,
-        'labels': ['bug-report', 'user-reported']  # Add default labels
+        'labels': ['bug-report', 'High']  # Add default labels
     }
     
     # Create the issue
@@ -75,37 +75,37 @@ def _build_jira_description(bug_report_data: Dict[str, Any], s3_urls: Optional[D
     
     # Description
     if bug_report_data.get('description'):
-        description_parts.append(f"*Description:*\n{bug_report_data['description']}\n")
+        description_parts.append(f"Description:\n{bug_report_data['description']}")
     
     # Steps to Reproduce
     if bug_report_data.get('steps_to_reproduce'):
-        description_parts.append(f"*Steps to Reproduce:*\n{bug_report_data['steps_to_reproduce']}\n")
+        description_parts.append(f"Steps to Reproduce:\n{bug_report_data['steps_to_reproduce']}")
     
     # Expected Behavior
     if bug_report_data.get('expected_behavior'):
-        description_parts.append(f"*Expected Behavior:*\n{bug_report_data['expected_behavior']}\n")
+        description_parts.append(f"Expected Behavior:\n{bug_report_data['expected_behavior']}")
     
     # Actual Behavior
     if bug_report_data.get('actual_behavior'):
-        description_parts.append(f"*Actual Behavior:*\n{bug_report_data['actual_behavior']}\n")
+        description_parts.append(f"Actual Behavior:\n{bug_report_data['actual_behavior']}")
     
     # Environment
     if bug_report_data.get('environment'):
-        description_parts.append(f"*Environment:*\n{bug_report_data['environment']}\n")
+        description_parts.append(f"Environment:\n{bug_report_data['environment']}")
     
     # Additional Notes
     if bug_report_data.get('additional_notes'):
-        description_parts.append(f"*Additional Notes:*\n{bug_report_data['additional_notes']}\n")
+        description_parts.append(f"Additional Notes:\n{bug_report_data['additional_notes']}")
     
     # Add S3 URLs if available
     if s3_urls:
-        description_parts.append("\n*Attachments:*\n")
+        description_parts.append("\nAttachments:")
         if s3_urls.get('transcription'):
-            description_parts.append(f"- Full conversation transcript: {s3_urls['transcription']}\n")
+            description_parts.append(f"- Full conversation transcript: {s3_urls['transcription']}")
         if s3_urls.get('console_logs'):
-            description_parts.append(f"- Console logs: {s3_urls['console_logs']}\n")
+            description_parts.append(f"- Console logs: {s3_urls['console_logs']}")
         if s3_urls.get('screen_recording'):
-            description_parts.append(f"- Screen recording: {s3_urls['screen_recording']}\n")
+            description_parts.append(f"- Screen recording: {s3_urls['screen_recording']}")
     
     return "\n".join(description_parts) if description_parts else "No description provided."
 

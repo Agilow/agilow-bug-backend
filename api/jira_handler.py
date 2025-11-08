@@ -99,6 +99,160 @@ def fetch_users() -> List[Dict[str, Any]]:
         return []
 
 
+def _convert_text_to_adf(text: str) -> Dict[str, Any]:
+    """
+    Convert plain text to Atlassian Document Format (ADF) for Jira API v3.
+    Handles markdown-style formatting like *Bold* and bullet points.
+    Follows the same pattern as agilow-backend comment formatting.
+    
+    Args:
+        text: Plain text string (may contain markdown-style formatting)
+    
+    Returns:
+        ADF document structure
+    """
+    import re
+    
+    if not text:
+        return {
+            "type": "doc",
+            "version": 1,
+            "content": []
+        }
+    
+    # Split text by newlines to create paragraphs
+    lines = text.split('\n')
+    content = []
+    i = 0
+    
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        if not line:
+            # Empty line - add empty paragraph for spacing
+            content.append({
+                "type": "paragraph",
+                "content": []
+            })
+            i += 1
+            continue
+        
+        # Check if line starts with bullet point
+        if line.startswith('- '):
+            # Collect all consecutive bullet points
+            bullet_items = []
+            while i < len(lines) and lines[i].strip().startswith('- '):
+                bullet_text = lines[i].strip()[2:].strip()
+                bullet_items.append(bullet_text)
+                i += 1
+            
+            # Create bullet list
+            list_items = []
+            for bullet_text in bullet_items:
+                list_items.append({
+                    "type": "listItem",
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": bullet_text
+                                }
+                            ]
+                        }
+                    ]
+                })
+            
+            if list_items:
+                content.append({
+                    "type": "bulletList",
+                    "content": list_items
+                })
+            continue
+        
+        # Check if line is a bold label (pattern: *Label:*)
+        if line.startswith('*') and line.endswith('*') and ':' in line:
+            # Extract label (e.g., "*Description:*" -> "Description")
+            label_match = re.match(r'\*([^*:]+)\*:\s*$', line)
+            if label_match:
+                label = label_match.group(1).strip()
+                # Look ahead for the value on next line
+                if i + 1 < len(lines) and lines[i + 1].strip():
+                    value = lines[i + 1].strip()
+                    # Create paragraph with bold label and value
+                    content.append({
+                        "type": "paragraph",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"{label}: ",
+                                "marks": [{"type": "strong"}]
+                            },
+                            {
+                                "type": "text",
+                                "text": value
+                            }
+                        ]
+                    })
+                    i += 2  # Skip both label and value lines
+                    continue
+                else:
+                    # Just the label, no value
+                    content.append({
+                        "type": "paragraph",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"{label}:",
+                                "marks": [{"type": "strong"}]
+                            }
+                        ]
+                    })
+                    i += 1
+                    continue
+        
+        # Check if line has inline bold label (pattern: *Label:* Value)
+        match = re.match(r'\*([^*:]+)\*:\s*(.+)$', line)
+        if match:
+            label = match.group(1).strip()
+            value = match.group(2).strip()
+            content.append({
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{label}: ",
+                        "marks": [{"type": "strong"}]
+                    },
+                    {
+                        "type": "text",
+                        "text": value
+                    }
+                ]
+            })
+            i += 1
+            continue
+        
+        # Regular paragraph
+        content.append({
+            "type": "paragraph",
+            "content": [
+                {
+                    "type": "text",
+                    "text": line
+                }
+            ]
+        })
+        i += 1
+    
+    return {
+        "type": "doc",
+        "version": 1,
+        "content": content
+    }
+
+
 def find_user_by_name(user_name: str, users: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
     """Find user by display name."""
     if users is None:
@@ -155,12 +309,9 @@ def create_issue(issue_data: Dict[str, Any], project_key: Optional[str] = None) 
         }
     }
     
-    # Add description (Jira accepts plain text or ADF format)
-    # Using plain text for simplicity - Jira will convert it
+    # Add description in ADF format (required for Jira Cloud API v3)
     if description:
-        # For Jira Cloud, we can use plain text or ADF format
-        # Using plain text is simpler and works well
-        payload["fields"]["description"] = description
+        payload["fields"]["description"] = _convert_text_to_adf(description)
     
     # Add priority if valid
     if priority and priority.lower() not in ['', 'none', 'default', 'medium']:
